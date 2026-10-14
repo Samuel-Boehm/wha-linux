@@ -15,7 +15,7 @@ So instead of trying to emulate the Windows version with Wine or running the And
 
 Requirement
 -----------
-This has only been tested on Arch Linux.
+Tested on Arch Linux (KDE Plasma) and Fedora 44 (GNOME).
 
 The script extracts the application locally, creates a Linux Python/Qt runtime and applies a small set of Linux compatibility fixes so that the WiiM Home desktop application can run natively on Linux.
 
@@ -29,7 +29,27 @@ To build the Linux executable on Arch, you need :
 - gst-plugins-bad
 - gst-plugins-ugly
 
-You will also need to download the official Wiim for Mac image available on the Wiim web site (https://www.wiimhome.com/app). Tested with version 0.2.10.4.
+On Fedora, you need:
+- python3 python3-requests
+- uv
+- 7zip
+- qt6-qtbase-devel
+- gstreamer1-plugins-good
+- gstreamer1-plugins-bad-free
+- gstreamer1-plugins-ugly-free
+
+`sudo dnf install python3 python3-requests uv 7zip qt6-qtbase-devel gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly-free`
+
+
+You will also need to download the official Wiim for Mac image available on the Wiim web site (https://www.wiimhome.com/app). Tested with versions 0.2.10.4 and 0.2.10.5.
+
+New installer versions
+----------------------
+The script only builds installers whose SHA-256 is listed as tested (`source-compatibility.json` inside `wha-linux.sh`). When WiiM releases a newer version, try it with:
+
+`sh wha-linux.sh --allow-untested /path/to/official-x86_64.dmg`
+
+If the build succeeds and the app works, add the new hash and version to `tested_sources` (the error message prints the SHA-256).
 
 Building
 --------
@@ -40,11 +60,20 @@ This will create a run.sh script located in a subdirectory of **$HOME/.local/sha
 
 Running
 -------
-You can call the script with the **wiim** bash script. Simply copy the file to your local bin directory ($HOME/bin) and make it executable. If you want to add a launcher, you can use the .desktop file but you'll need to edit it to point the the directory where **run.sh** is created.
+After building, the script starts WiiM Home right away. On this first start the app adds itself to your desktop's application menu.
 
-Known bugs
-----------
+Desktop integration
+-------------------
+The launcher adapts the window to the desktop it runs on:
+- **KDE Plasma:** the window gets normal Plasma title bars and the KDE theme, and the app's menu bar (Playback, About) stays visible.
+- **GNOME and other desktops:** the app keeps its own title bar from the Windows version and hides the menu bar, as on Windows. On Wayland it runs via XWayland, because Wayland doesn't let an app move its own window by dragging its title bar.
+
+To force a different Qt platform, set `QT_QPA_PLATFORM` yourself before starting (e.g. `QT_QPA_PLATFORM=wayland wiim`).
+
+Known bugs and limitations
+--------------------------
 - Presets are not available.
+- Only the music services built into the official desktop app are available and local/media-server music. Services such as YouTube Music, Spotify or Amazon Music exist only in the mobile apps.
 
 Credits
 -------

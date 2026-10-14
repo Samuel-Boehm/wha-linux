@@ -1,6 +1,7 @@
 #!/bin/sh
-# Native WiiM Home: sh wha-linux-0.2.10.4.sh /path/to/official-x86_64.dmg
+# Native WiiM Home: sh wha-linux.sh /path/to/official-x86_64.dmg
 # Prerequisites (Arch): sudo pacman -S python uv 7zip qt6-base
+# Prerequisites (Fedora): sudo dnf install python3 uv 7zip qt6-qtbase-devel
 # Only our tooling below; the official application comes from your DMG.
 exec python3 - "$0" "$@" <<'WHA_LAUNCHER'
 """Entry point embedded inside wha-linux.sh (stdlib only until build)."""
@@ -41,6 +42,7 @@ def main(files, wrapper):
     parser.add_argument("dmg", nargs="?", help="official installer downloaded from https://wiimhome.com/app")
     parser.add_argument("--build-only", action="store_true", help="build and verify resources without opening a window")
     parser.add_argument("--unpack", metavar="DIRECTORY", help="unpack our tooling for inspection, without the installer or build")
+    parser.add_argument("--allow-untested", action="store_true", help="build an installer not listed as tested; patches still refuse to apply to changed code")
     args = parser.parse_args(sys.argv[2:])
     if args.unpack:
         destination = Path(args.unpack).expanduser().resolve()
@@ -61,8 +63,11 @@ def main(files, wrapper):
     matched = next((s for s in sources if s["sha256"] == source_hash), None)
     if matched is None:
         expected = ", ".join(s["version"] for s in sources)
-        parser.error("Installer version is newer/different than the tested source. Build may require patch review. Expected: %s; actual SHA-256: %s" % (expected, source_hash))
-    print("Verified %s (%s)" % (matched["version"], source_hash), flush=True)
+        if not args.allow_untested:
+            parser.error("Installer version is newer/different than the tested sources (%s); actual SHA-256: %s. Rerun with --allow-untested to try the build anyway." % (expected, source_hash))
+        print("WARNING: untested installer (SHA-256 %s). Tested: %s. Patches are context-checked and will stop the build if the code changed." % (source_hash, expected), flush=True)
+    else:
+        print("Verified %s (%s)" % (matched["version"], source_hash), flush=True)
 
     data = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))).expanduser().resolve()
     root = data / "wha-linux" / digest(wrapper)[:20] / source_hash[:20]
@@ -79,7 +84,7 @@ def main(files, wrapper):
                 rcc = os.environ.get("RCC") or next((p for p in ("/usr/lib/qt6/rcc", "/usr/lib64/qt6/libexec/rcc", "rcc") if shutil.which(p)), "rcc")
                 missing = [tool for tool in ("bash", "uv", "7z", rcc) if shutil.which(tool) is None]
                 if missing:
-                    parser.error("Missing: %s. Arch/Manjaro: sudo pacman -S python uv 7zip qt6-base" % ", ".join(missing))
+                    parser.error("Missing: %s. Arch/Manjaro: sudo pacman -S python uv 7zip qt6-base; Fedora: sudo dnf install uv 7zip qt6-qtbase-devel" % ", ".join(missing))
                 unpack(files, root)
                 env = dict(os.environ)
                 env.pop("PYTHONPATH", None)
@@ -123,7 +128,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_dmg=${WIIM_OFFICIAL_DMG:?Run ./bootstrap.sh --dmg /path/to/official.dmg}
 command -v uv >/dev/null || { echo "Missing uv: install it from https://docs.astral.sh/uv/" >&2; exit 1; }
 export RCC="${RCC:-rcc}"
-command -v "$RCC" >/dev/null || { echo "Missing rcc. On Arch/Manjaro: sudo pacman -S qt6-base" >&2; exit 1; }
+command -v "$RCC" >/dev/null || { echo "Missing rcc. On Arch/Manjaro: sudo pacman -S qt6-base; on Fedora: sudo dnf install qt6-qtbase-devel" >&2; exit 1; }
 work="$root/work"
 out="$root/out/WiiM-Home-Linux"
 rm -rf "$work" "$out" "$root/dist"
@@ -169,9 +174,20 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 export BEETSDIR="${BEETSDIR:-$XDG_CONFIG_HOME/beets}"
 
-# Plasma 6 native integration flags
-export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-kde}"
-export QT_WAYLAND_DISABLE_WINDOWDECORATION=0
+case "${XDG_CURRENT_DESKTOP:-}" in
+  *KDE*)
+    # Plasma 6 native integration flags
+    export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-kde}"
+    export QT_WAYLAND_DISABLE_WINDOWDECORATION=0
+    ;;
+  *)
+    # The app draws its own title bar in a frameless window; XWayland lets
+    # that title bar move the window, which Wayland does not allow.
+    if [ "${XDG_SESSION_TYPE:-}" = wayland ] && [ -z "${QT_QPA_PLATFORM:-}" ]; then
+      export QT_QPA_PLATFORM=xcb
+    fi
+    ;;
+esac
 
 mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$BEETSDIR"
 cd "$base/app"; exec "$base/runtime/venv/bin/python" "$base/bootstrap.py" "$@"
@@ -304,10 +320,15 @@ def install_app_icon():
     def setup_ui(self, *args, **kwargs):
         result = original_setup(self, *args, **kwargs)
 
-        # Enforce standard Plasma system window frame and titlebar decorations
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, False)
-        self.setWindowFilePath("")
+        # Enforce standard Plasma system window frame and titlebar decorations;
+        # elsewhere keep the app's own frameless window and title bar.
+        if "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", ""):
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, False)
+            self.setWindowFilePath("")
+        else:
+            # Like the Windows build: Playback/About live elsewhere in the UI.
+            self.menuBar().hide()
 
         path = icon_path()
         icon = QIcon(str(path))
@@ -1285,6 +1306,15 @@ zeroconf==0.148.0
 # === wha-file source-compatibility.json ===
 {
   "tested_sources": [
+    {
+      "platform": "macOS x86_64 DMG",
+      "version": "WiiM Home 0.2.10.5",
+      "bundle_build": "20261010134527",
+      "sha256": "ae73625fab54d60b87f69aa427d04044e43b6ec5ba7f91269d00c1dcd56022eb",
+      "size_bytes": 78667482,
+      "python": "CPython 3.9",
+      "qt": "Qt 6 / PyQt6"
+    },
     {
       "platform": "macOS x86_64 DMG",
       "version": "WiiM Home 0.2.10.4",

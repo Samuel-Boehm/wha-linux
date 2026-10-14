@@ -2,8 +2,7 @@
 
 # To compile, run this:
 #
-#cd $HOME/bin/wiim-native
-#./wha-linux-0.2.10.4.sh wiim-mac-0.2.10.4.dmg
+#sh wha-linux.sh /path/to/official-x86_64.dmg
 
 # Define the root directory to search for run.sh
 # Update SEARCH_DIR if your project/builds live elsewhere
